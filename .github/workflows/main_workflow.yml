@@ -1,0 +1,107 @@
+name: OKX Balance Monitor and Sync
+
+on:
+  schedule:
+    - cron: '15 */2 * * *'  # 每隔2小时的第15分钟运行 (例如 00:15, 02:15, 04:15 UTC)
+  workflow_dispatch:         # 允许手动触发
+
+jobs:
+  update_and_sync_data:
+    runs-on: ubuntu-latest
+    # permissions for current (private) repo
+    # contents: write is needed for the action to push back to its own repo
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout private repository code
+      uses: actions/checkout@v4
+      # No token needed here if permissions.contents: write is set for the job
+      # and the default GITHUB_TOKEN is used for pushing to *this* repo.
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Run OKX balance monitor script
+      id: run_script # Give an ID to this step to check its outcome
+      env:
+        OKX_API_KEY: ${{ secrets.OKX_API_KEY_PRIVATE }} # Use specific secret name
+        OKX_SECRET_KEY: ${{ secrets.OKX_SECRET_KEY_PRIVATE }}
+        OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE_PRIVATE }}
+      run: python okx_monitor_secure.py # Ensure this is your Python script filename
+      continue-on-error: false # If script fails, stop the workflow here
+
+    - name: Commit and push data to private repo
+      if: success() # Only run if the python script was successful
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        git pull --rebase # Sync before checking diff
+
+        # Add both files if they exist and have changes
+        files_to_commit=""
+        if git diff --quiet ${{ env.EXCEL_FILE_NAME }}; then
+            echo "No changes in ${{ env.EXCEL_FILE_NAME }}."
+        else
+            if [ -f "${{ env.EXCEL_FILE_NAME }}" ]; then
+                git add ${{ env.EXCEL_FILE_NAME }}
+                files_to_commit="${files_to_commit} ${{ env.EXCEL_FILE_NAME }}"
+                echo "Staged ${{ env.EXCEL_FILE_NAME }}."
+            fi
+        fi
+
+        if git diff --quiet ${{ env.JSON_DATA_FILE_NAME }}; then
+            echo "No changes in ${{ env.JSON_DATA_FILE_NAME }}."
+        else
+            if [ -f "${{ env.JSON_DATA_FILE_NAME }}" ]; then
+                git add ${{ env.JSON_DATA_FILE_NAME }}
+                files_to_commit="${files_to_commit} ${{ env.JSON_DATA_FILE_NAME }}"
+                echo "Staged ${{ env.JSON_DATA_FILE_NAME }}."
+            fi
+        fi
+
+        # Only commit and push if files were actually staged
+        if [ -n "$files_to_commit" ]; then
+          git commit -m "Automated balance update (private repo): $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          # Retry push
+          retry_count=0
+          max_retries=3
+          until git push || [ $retry_count -eq $max_retries ]; do
+            retry_count=$((retry_count+1))
+            echo "Push to private repo failed. Retrying (${retry_count}/${max_retries})..."
+            sleep 5
+            git pull --rebase
+          done
+          if [ $retry_count -eq $max_retries ]; then echo "Push to private repo failed after $max_retries retries."; exit 1; fi
+          echo "Changes committed and pushed to private repo."
+        else
+          echo "No substantive changes to commit in private repo data files."
+        fi
+      env:
+        EXCEL_FILE_NAME: okx_balance_history.xlsx
+        JSON_DATA_FILE_NAME: balance_data.json
+
+    - name: Sync balance_data.json to public repository
+      if: success() # Only if previous steps were successful
+      uses: cpina/github-action-push-to-another-repository@main # Popular action for this
+      env:
+        API_TOKEN_GITHUB: ${{ secrets.PAT_FOR_PUBLIC_REPO_SYNC }} # PAT with write access to the public repo
+      with:
+        source-directory: '.' # Root of the private repo (where balance_data.json is)
+        destination-github-username: '<Metalphon>' # Replace
+        destination-repository-name: '<money_agent_pages>' # Replace (e.g., okx-balance-pages)
+        user-email: 'github-actions[bot]@users.noreply.github.com'
+        user-name: 'github-actions[bot]'
+        destination-repository-branch: 'main' # Or 'master', or your public repo's default branch
+        target-directory: '' # Push to the root of the public repo
+        commit-message: 'Automated update of balance_data.json'
+        file-pattern: 'balance_data.json' # Only sync this file
+        # Optional: Use force push if you want to overwrite, but be careful
+        # force: true
