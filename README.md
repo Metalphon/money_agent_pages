@@ -7,7 +7,7 @@
 ## 页面访问
 
 可以通过以下链接访问实时更新的图表：
-[[https://metalphon.github.io/okx-balance-pages/](https://metalphon.github.io/money_agent_pages/)](https://metalphon.github.io/okx-balance-pages/)  
+[[https://metalphon.github.io/okx-balance-pages/](https://metalphon.github.io/money_agent_pages/)]
 
 ## 功能
 
