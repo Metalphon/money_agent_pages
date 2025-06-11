@@ -6,11 +6,8 @@
 
 ## 页面访问
 
-您可以通过以下链接访问实时更新的图表：
-
-[https://<你的GitHub用户名>.github.io/<本公开仓库名>/](https://<你的GitHub用户名>.github.io/<本公开仓库名>/)
-
-例如：[https://metalphon.github.io/okx-balance-pages/](https://metalphon.github.io/okx-balance-pages/)  (请替换为你的实际链接)
+可以通过以下链接访问实时更新的图表：
+[https://metalphon.github.io/okx-balance-pages/](https://metalphon.github.io/okx-balance-pages/)  
 
 ## 功能
 
@@ -24,7 +21,7 @@
 
 *   **前端：** 使用纯HTML, CSS, 和 JavaScript。
 *   **图表库：** [Chart.js](https://www.chartjs.org/) 用于绘制折线图。
-*   **日期/时间处理：** 使用 [Luxon](https://moment.github.io/luxon/) (或 [Moment.js](https://momentjs.com/)，根据实际使用) 配合Chart.js的日期适配器处理时间轴。
+*   **日期/时间处理：** 使用 [Moment.js](https://momentjs.com/，根据实际使用) 配合Chart.js的日期适配器处理时间轴。
 *   **数据源：** 前端页面通过 `fetch` API 读取本仓库根目录下的 `balance_data.json` 文件。
 *   **数据更新：** `balance_data.json` 文件由一个位于作者私有仓库中的GitHub Actions工作流程自动生成并定期推送到本仓库。该自动化流程负责安全地与OKX API交互。
 *   **托管：** 本页面通过 [GitHub Pages](https://pages.github.com/) 托管。
@@ -33,7 +30,6 @@
 
 *   `index.html`: 主要的前端页面，包含图表渲染逻辑。
 *   `balance_data.json`: (由GitHub Actions自动更新) 存储用于图表绘制的时间序列数据。
-*   (可选) `luxon.min.js`, `chartjs-adapter-luxon.min.js` (或对应的Moment.js文件): 如果选择本地托管这些JS库而不是使用CDN。
 
 ## 关于数据
 
