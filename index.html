@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OKX 钱包余额监控</title>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- Luxon DateTime Library CDN (for Chart.js time adapter) -->
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
+    <!-- Chart.js Adapter for Luxon CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f2f5; /* 淡灰色背景 */
+            color: #333; /* 深灰色文字 */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 20px 30px;
+            border-radius: 12px;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+            width: 95%;
+            max-width: 1100px; /* 增加最大宽度 */
+            margin-bottom: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #0056b3; /* OKX 品牌蓝的深色调 */
+            margin-bottom: 25px;
+            font-size: 2em;
+        }
+        .chart-container {
+            position: relative;
+            height: 60vh; /* 增加图表高度 */
+            min-height: 400px; /* 最小高度 */
+            width: 100%;
+            margin-bottom: 30px;
+        }
+        .summary-container {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            flex-wrap: wrap;
+            text-align: center;
+            margin-bottom: 25px;
+            padding: 15px;
+            background-color: #e6f7ff; /* 淡蓝色背景 */
+            border: 1px solid #91d5ff; /* 边框颜色 */
+            border-radius: 8px;
+        }
+        .summary-item {
+            margin: 10px 15px;
+        }
+        .summary-item p {
+            margin: 5px 0;
+            font-size: 1.1em;
+            color: #555;
+        }
+        .summary-item strong {
+            font-size: 1.3em;
+            color: #003a75; /* 更深的品牌蓝 */
+        }
+        .status {
+            text-align: center;
+            margin-top: 15px;
+            font-style: italic;
+            color: #666;
+        }
+        .footer {
+            margin-top: auto; /* 将页脚推到底部 */
+            padding-top: 20px;
+            text-align: center;
+            font-size: 0.9em;
+            color: #777;
+            width: 100%;
+        }
+        .footer a {
+            color: #007bff; /* 链接颜色 */
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+        .loader {
+            border: 6px solid #e0e0e0; /* 淡化边框 */
+            border-radius: 50%;
+            border-top: 6px solid #007bff; /* 品牌蓝 */
+            width: 50px;
+            height: 50px;
+            animation: spin 1.2s linear infinite;
+            margin: 30px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error-message {
+            color: #ff4d4f; /* 红色错误信息 */
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>OKX 钱包总资产监控 (USDT)</h1>
+        <div class="summary-container">
+            <div class="summary-item">
+                <p>当前总资产:</p>
+                <p><strong id="currentBalance">加载中...</strong> USDT</p>
+            </div>
+            <div class="summary-item">
+                <p>最后更新时间:</p>
+                <p><span id="lastUpdate">加载中...</span> (UTC)</p>
+            </div>
+            <div class="summary-item">
+                <p>24小时变化:</p>
+                <p><span id="change24h">计算中...</span></p>
+            </div>
+        </div>
+        <div class="chart-container">
+            <canvas id="balanceChart"></canvas>
+        </div>
+        <div class="status" id="chartStatus"><div class="loader"></div>正在加载图表数据...</div>
+    </div>
+    <div class="footer">
+        数据由GitHub Actions定时更新 (通常每2小时)
+        <p>查看源码: <a id="sourceLink" href="#" target="_blank" rel="noopener noreferrer">GitHub Repository</a></p>
+    </div>
+
+    <script>
+        const jsonDataUrl = 'balance_data.json'; // 相对于index.html的路径
+        let balanceChartInstance = null;
+
+        // Luxon DateTime 用于日期时间操作
+        const DateTime = luxon.DateTime;
+
+        async function fetchDataAndRenderChart() {
+            const statusDiv = document.getElementById('chartStatus');
+            const currentBalanceEl = document.getElementById('currentBalance');
+            const lastUpdateEl = document.getElementById('lastUpdate');
+            const change24hEl = document.getElementById('change24h');
+            const loader = statusDiv.querySelector('.loader');
+
+            if (loader) loader.style.display = 'block';
+            statusDiv.innerHTML = '<div class="loader"></div>正在努力获取最新数据...'; // 更新加载信息
+
+            try {
+                // 添加缓存清除参数，确保获取最新数据
+                const response = await fetch(`${jsonDataUrl}?t=${new Date().getTime()}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
+                }
+                const rawData = await response.json();
+
+                if (!Array.isArray(rawData)) { // 增加对数据格式的检查
+                    console.error("Fetched data is not an array:", rawData);
+                    throw new Error("获取到的数据格式不正确 (不是一个列表)。");
+                }
+                
+                if (loader) loader.style.display = 'none';
+                statusDiv.textContent = '';
+
+
+                if (rawData && rawData.length > 0) {
+                    const processedData = rawData.map(item => ({
+                        // 假设 item.Timestamp 是 "YYYY-MM-DD HH:MM:SS" 格式的UTC时间字符串
+                        timestamp: DateTime.fromSQL(item.Timestamp, { zone: 'utc' }),
+                        balance: parseFloat(item.TotalBalanceUSDT)
+                    })).sort((a, b) => a.timestamp.toMillis() - b.timestamp.toMillis());
+
+                    const labels = processedData.map(item => item.timestamp.toMillis());
+                    const values = processedData.map(item => item.balance);
+
+                    // 更新摘要信息
+                    const latestEntry = processedData[processedData.length - 1];
+                    currentBalanceEl.textContent = latestEntry.balance.toFixed(2);
+                    lastUpdateEl.textContent = latestEntry.timestamp.toFormat('yyyy-MM-dd HH:mm:ss');
+
+                    // 计算24小时变化
+                    const nowForCalc = DateTime.utc(); // 当前UTC时间
+                    const twentyFourHoursAgo = nowForCalc.minus({ hours: 24 });
+                    let balance24hAgo = null;
+                    let found24h = false;
+
+                    // 从最新的数据往前找，找到第一个早于或等于24小时前的数据点
+                    for (let i = processedData.length - 1; i >= 0; i--) {
+                        if (processedData[i].timestamp <= twentyFourHoursAgo) {
+                            balance24hAgo = processedData[i].balance;
+                            found24h = true;
+                            break;
+                        }
+                    }
+                    // 如果所有数据都在24小时内，且有多于一条数据，则用最早的数据作为比较基准
+                    if (!found24h && processedData.length > 1 && processedData[0].timestamp > twentyFourHoursAgo) {
+                        balance24hAgo = processedData[0].balance;
+                    }
+
+                    if (balance24hAgo !== null) {
+                        const change = latestEntry.balance - balance24hAgo;
+                        const percentageChange = balance24hAgo === 0 ? (change > 0 ? Infinity : -Infinity) : (change / balance24hAgo * 100);
+                        
+                        let changeColor = 'grey';
+                        if (change > 1e-8) changeColor = 'green'; // 考虑浮点数精度
+                        if (change < -1e-8) changeColor = 'red';
+
+                        change24hEl.innerHTML = `
+                            <span style="color: ${changeColor};">
+                                ${change >= 0 ? '+' : ''}${change.toFixed(2)} USDT 
+                                (${change >= 0 ? '+' : ''}${percentageChange.toFixed(2)}%)
+                            </span>`;
+                    } else if (processedData.length <= 1) {
+                         change24hEl.textContent = "N/A (数据不足)";
+                    } else {
+                        change24hEl.textContent = "N/A (无24小时前数据)";
+                    }
+
+                    const chartDataConfig = {
+                        labels: labels,
+                        datasets: [{
+                            label: '总资产估值 (USDT)',
+                            data: values,
+                            borderColor: 'rgb(0, 123, 255)',
+                            backgroundColor: 'rgba(0, 123, 255, 0.15)',
+                            borderWidth: 1.5,
+                            pointRadius: 2,
+                            pointHoverRadius: 4,
+                            tension: 0.2,
+                            fill: true,
+                        }]
+                    };
+
+                    const chartOptions = {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'time',
+                                adapters: {
+                                    date: {نیچے: luxon.DateTime.DATETIME_MED_WITH_SECONDS} // 修正：这里应该是 locale，如果需要
+                                },
+                                time: {
+                                    tooltipFormat: 'MMM dd, yyyy HH:mm:ss ZZZZ', // ZZZZ 显示UTC偏移
+                                    unit: determineTimeUnit(labels),
+                                    displayFormats: { // Luxon的格式标记
+                                        millisecond: 'HH:mm:ss.SSS',
+                                        second: 'HH:mm:ss',
+                                        minute: 'HH:mm',
+                                        hour: 'MMM dd HH:mm',
+                                        day: 'MMM dd',
+                                        week: 'MMM dd yyyy',
+                                        month: 'MMM yyyy',
+                                        quarter: 'yyyy QQQ',
+                                        year: 'yyyy'
+                                    }
+                                },
+                                title: {
+                                    display: true,
+                                    text: '时间 (UTC)',
+                                    font: { size: 14 }
+                                },
+                                ticks: {
+                                    autoSkip: true,
+                                    maxTicksLimit: calculateMaxTicks(window.innerWidth),
+                                    source: 'auto',
+                                    maxRotation: 30, // 限制最大旋转角度
+                                    minRotation: 0,
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: '资产估值 (USDT)',
+                                    font: { size: 14 }
+                                },
+                                beginAtZero: false,
+                                ticks: {
+                                    callback: function(value) {
+                                        return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                    }
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top',
+                                labels: { font: { size: 13 } }
+                            },
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false,
+                                titleFont: { size: 14 },
+                                bodyFont: { size: 12 },
+                                callbacks: {
+                                    label: function(context) {
+                                        let label = context.dataset.label || '';
+                                        if (label) {
+                                            label += ': ';
+                                        }
+                                        if (context.parsed.y !== null) {
+                                            label += context.parsed.y.toFixed(4) + ' USDT';
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        },
+                        interaction: { // 增强交互
+                            mode: 'nearest',
+                            axis: 'x',
+                            intersect: false
+                        }
+                    };
+                    
+                    function determineTimeUnit(timestamps) {
+                        if (!timestamps || timestamps.length < 2) return 'hour';
+                        const first = DateTime.fromMillis(timestamps[0]);
+                        const last = DateTime.fromMillis(timestamps[timestamps.length - 1]);
+                        const diff = last.diff(first, ['days', 'hours', 'minutes', 'seconds']).toObject();
+
+                        if (diff.days > 30) return 'month';
+                        if (diff.days > 7) return 'week';
+                        if (diff.days > 1) return 'day';
+                        if (diff.hours > 12 || diff.days > 0) return 'hour';
+                        if (diff.minutes > 60 || diff.hours > 0) return 'minute';
+                        return 'second';
+                    }
+
+                    function calculateMaxTicks(width) {
+                        if (width < 480) return 4;
+                        if (width < 768) return 7;
+                        if (width < 1024) return 10;
+                        return 12;
+                    }
+
+                    if (balanceChartInstance) {
+                        balanceChartInstance.destroy();
+                    }
+                    balanceChartInstance = new Chart(
+                        document.getElementById('balanceChart').getContext('2d'),
+                        { type: 'line', data: chartDataConfig, options: chartOptions }
+                    );
+
+                } else {
+                    statusDiv.textContent = '暂无数据展示。等待GitHub Action下一次更新...';
+                    currentBalanceEl.textContent = "N/A";
+                    lastUpdateEl.textContent = "N/A";
+                    change24hEl.textContent = "N/A";
+                }
+            } catch (error) {
+                console.error('获取或渲染图表数据时出错:', error);
+                if (loader) loader.style.display = 'none';
+                statusDiv.innerHTML = `<span class="error-message">加载图表数据失败: ${error.message}。请检查浏览器控制台获取更多信息。</span>`;
+                currentBalanceEl.textContent = "错误";
+                lastUpdateEl.textContent = "错误";
+                change24hEl.textContent = "错误";
+            }
+        }
+
+        // 自动更新源码链接
+        function updateSourceLink() {
+            const sourceLinkEl = document.getElementById('sourceLink');
+            const hostname = window.location.hostname;
+            if (hostname.endsWith('github.io')) {
+                const parts = hostname.split('.');
+                const username = parts[0];
+                const repoPathParts = window.location.pathname.split('/').filter(part => part);
+                if (repoPathParts.length > 0) {
+                    const repoName = repoPathParts[0];
+                    sourceLinkEl.href = `https://github.com/${username}/${repoName}`;
+                    sourceLinkEl.textContent = `github.com/${username}/${repoName}`;
+                } else {
+                     sourceLinkEl.textContent = 'GitHub Repository (无法自动确定)';
+                }
+            } else {
+                 sourceLinkEl.textContent = 'GitHub Repository (本地查看)';
+            }
+        }
+
+
+        // 页面加载时获取数据并绘制图表
+        document.addEventListener('DOMContentLoaded', () => {
+            updateSourceLink();
+            fetchDataAndRenderChart();
+
+            // 可以设置定时器自动刷新前端数据，但这会增加对GitHub服务器的请求。
+            // 用户手动刷新页面通常是更好的选择，因为GitHub Actions会按计划更新底层的json文件。
+            // setInterval(fetchDataAndRenderChart, 5 * 60 * 1000); // 例如：每5分钟刷新一次
+        });
+    </script>
+</body>
+</html>
