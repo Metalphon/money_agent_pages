@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OKX 钱包余额监控</title>
+    <!-- 1. Chart.js (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- 2. Moment.js (本地引用 - 请确保文件在同级目录或正确路径) -->
+    <script src="moment.min.js"></script>
+    <!-- 3. Chart.js Adapter for Moment.js (本地引用) -->
+    <script src="chartjs-adapter-moment.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; display: flex; flex-direction: column; align-items: center; }
+        .chart-container { width: 90%; max-width: 900px; height: 50vh; min-height: 350px; margin-top: 20px; }
+        h1 { text-align: center; }
+        .status { text-align: center; margin-top: 10px; font-style: italic; color: #777; }
+    </style>
+</head>
+<body>
+    <h1>OKX 钱包总资产 (USDT)</h1>
+    <div class="chart-container">
+        <canvas id="balanceChart"></canvas>
+    </div>
+    <div class="status" id="chartStatus">正在加载数据...</div>
+
+    <script>
+        const jsonDataUrl = 'balance_data.json'; // 确保这个文件与index.html在同一目录
+        let balanceChartInstance = null;
+
+        async function fetchDataAndDrawChart() {
+            const statusDiv = document.getElementById('chartStatus');
+            statusDiv.textContent = '正在获取最新数据...';
+
+            try {
+                // 添加缓存清除参数
+                const response = await fetch(`${jsonDataUrl}?t=${new Date().getTime()}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status} when fetching ${jsonDataUrl}`);
+                }
+                const rawData = await response.json();
+
+                if (!Array.isArray(rawData)) {
+                    throw new Error("获取到的数据不是一个有效的列表。");
+                }
+                
+                statusDiv.textContent = ''; // 清除加载信息
+
+                if (rawData && rawData.length > 0) {
+                    // 假设Timestamp是 "YYYY-MM-DD HH:MM:SS" 格式的UTC时间字符串
+                    const processedData = rawData.map(item => ({
+                        // 使用 moment.utc() 将字符串解析为UTC Moment对象
+                        timestamp: moment.utc(item.Timestamp, "YYYY-MM-DD HH:mm:ss"),
+                        balance: parseFloat(item.TotalBalanceUSDT)
+                    })).sort((a, b) => a.timestamp.valueOf() - b.timestamp.valueOf()); // 按时间排序
+
+                    const labels = processedData.map(item => item.timestamp.valueOf()); // X轴数据 (毫秒时间戳)
+                    const values = processedData.map(item => item.balance);         // Y轴数据
+
+                    const chartData = {
+                        labels: labels,
+                        datasets: [{
+                            label: '总资产估值 (USDT)',
+                            data: values,
+                            borderColor: 'rgb(75, 192, 192)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            tension: 0.1,
+                            fill: true,
+                            borderWidth: 1.5,
+                            pointRadius: 3,
+                            pointHoverRadius: 5
+                        }]
+                    };
+
+                    const config = {
+                        type: 'line',
+                        data: chartData,
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                x: {
+                                    type: 'time', // 启用时间轴
+                                    time: {
+                                        // Moment.js的格式化字符串
+                                        tooltipFormat: 'MMM DD, YYYY HH:mm:ss',
+                                        unit: 'day', // 可以根据数据范围自动调整或手动设置 (day, hour, minute)
+                                        displayFormats: {
+                                            day: 'MMM DD YYYY',
+                                            hour: 'MMM DD HH:mm'
+                                        }
+                                    },
+                                    title: {
+                                        display: true,
+                                        text: '时间 (UTC)'
+                                    },
+                                    ticks: {
+                                        autoSkip: true,
+                                        maxTicksLimit: 10 // 调整X轴刻度数量
+                                    }
+                                },
+                                y: {
+                                    title: {
+                                        display: true,
+                                        text: '资产估值 (USDT)'
+                                    },
+                                    beginAtZero: false // 通常余额不会从0开始，除非你的资产确实是0
+                                }
+                            },
+                            plugins: {
+                                legend: {
+                                    position: 'top',
+                                },
+                                tooltip: {
+                                    mode: 'index',
+                                    intersect: false,
+                                }
+                            }
+                        }
+                    };
+
+                    if (balanceChartInstance) {
+                        balanceChartInstance.destroy(); // 销毁旧图表实例
+                    }
+                    balanceChartInstance = new Chart(
+                        document.getElementById('balanceChart').getContext('2d'),
+                        config
+                    );
+                    statusDiv.textContent = `图表已更新 @ ${new Date().toLocaleTimeString()}`;
+                } else {
+                    statusDiv.textContent = '暂无数据可供显示。';
+                }
+            } catch (error) {
+                console.error('获取或渲染图表数据时出错:', error);
+                statusDiv.textContent = `加载图表数据失败: ${error.message}`;
+            }
+        }
+
+        // 页面加载时获取数据并绘制图表
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchDataAndDrawChart();
+
+            // 如果需要前端定时刷新图表 (会增加对服务器的请求)
+            // setInterval(fetchDataAndDrawChart, 30 * 1000); // 例如每30秒刷新一次
+        });
+    </script>
+</body>
+</html>
